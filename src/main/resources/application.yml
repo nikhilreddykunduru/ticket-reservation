@@ -1,8 +1,8 @@
 spring:
   datasource:
-    url: jdbc:postgresql://127.0.0.1:5433/seatreservation
-    username: postgres
-    password: postgres
+    url: ${DATABASE_URL:jdbc:postgresql://127.0.0.1:5433/seatreservation}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:postgres}
 
 ticket-reservation:
   admin-token: ${ADMIN_TOKEN:admin-secret}
