@@ -104,6 +104,9 @@
 			<label for="admin-token">Admin token</label>
 			<input id="admin-token" name="admin-token" type="password" required
 				autocomplete="off" spellcheck="false">
+			<label for="hot-seat-requests">Hot-seat request count</label>
+			<input id="hot-seat-requests" name="hot-seat-requests" type="number"
+				min="1" step="1" value="500" required>
 			<button id="run-button" type="submit">Run burst test</button>
 		</form>
 
@@ -116,9 +119,9 @@
 	<script>
 		const form = document.querySelector("#burst-form");
 		const tokenInput = document.querySelector("#admin-token");
+		const hotRequestsInput = document.querySelector("#hot-seat-requests");
 		const runButton = document.querySelector("#run-button");
 		const output = document.querySelector("#output");
-		const HOT_REQUESTS = 500;
 		const IDEMPOTENCY_REQUESTS = 100;
 		const USER_LIMIT_REQUESTS = 10;
 		const MAX_PARALLEL_REQUESTS = 50;
@@ -126,6 +129,10 @@
 		function appendOutput(message) {
 			output.textContent += `${message}\n`;
 		}
+
+		hotRequestsInput.addEventListener("input", () => {
+			hotRequestsInput.setCustomValidity("");
+		});
 
 		async function request(path, options = {}) {
 			const response = await fetch(path, options);
@@ -170,7 +177,7 @@
 			}, { confirmed: 0, conflicts: 0, serverErrors: 0, unexpected: [] });
 		}
 
-		async function runBurst(adminToken) {
+		async function runBurst(adminToken, hotRequests) {
 			output.textContent = "";
 			appendOutput("Creating a test show...");
 			const showName = `burst-${Date.now()}-${crypto.randomUUID()}`;
@@ -196,11 +203,11 @@
 
 			const showId = created.body.id;
 			appendOutput(`Show: ${showId}`);
-			appendOutput(`Running ${HOT_REQUESTS + IDEMPOTENCY_REQUESTS
+			appendOutput(`Running ${hotRequests + IDEMPOTENCY_REQUESTS
 				+ USER_LIMIT_REQUESTS} reservation requests (up to ${MAX_PARALLEL_REQUESTS} at a time)...`);
 
 			const hotResults = await runConcurrent(Array.from(
-				{ length: HOT_REQUESTS },
+				{ length: hotRequests },
 				(_, index) => () => request(`/shows/${showId}/reserve`, {
 					method: "POST",
 					headers: {
@@ -264,7 +271,7 @@
 			const state = finalState.body;
 			const expectedConfirmed = 6;
 			const passed = hotSummary.confirmed === 1
-				&& hotSummary.conflicts === HOT_REQUESTS - 1
+				&& hotSummary.conflicts === hotRequests - 1
 				&& idempotencySummary.confirmed === IDEMPOTENCY_REQUESTS
 				&& idempotencyReservationIds.length === IDEMPOTENCY_REQUESTS
 				&& new Set(idempotencyReservationIds).size === 1
@@ -305,10 +312,17 @@
 
 		form.addEventListener("submit", async event => {
 			event.preventDefault();
+			const hotRequests = hotRequestsInput.valueAsNumber;
+			if (!Number.isSafeInteger(hotRequests) || hotRequests < 1) {
+				hotRequestsInput.setCustomValidity("Enter a positive whole number.");
+				hotRequestsInput.reportValidity();
+				return;
+			}
+			hotRequestsInput.setCustomValidity("");
 			runButton.disabled = true;
 			output.textContent = "";
 			try {
-				await runBurst(tokenInput.value.trim());
+				await runBurst(tokenInput.value.trim(), hotRequests);
 			} catch (error) {
 				appendOutput(`Burst test failed: ${error.message}`);
 			} finally {

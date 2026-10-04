@@ -6,10 +6,16 @@ IDEMPOTENCY_REQUESTS=100
 USER_LIMIT_REQUESTS=10
 MAX_PARALLEL_REQUESTS=50
 BASE_URL=${1:-}
+HOT_SEAT_REQUESTS=${2:-$HOT_SEAT_REQUESTS}
 ADMIN_TOKEN=${ADMIN_TOKEN:-admin-secret}
 
 if [[ -z "$BASE_URL" ]]; then
-	printf 'Usage: %s <BASE_URL>\n' "$0" >&2
+	printf 'Usage: %s <BASE_URL> [HOT_SEAT_REQUESTS]\n' "$0" >&2
+	exit 2
+fi
+
+if [[ ! "$HOT_SEAT_REQUESTS" =~ ^[1-9][0-9]*$ ]]; then
+	printf 'HOT_SEAT_REQUESTS must be a positive integer.\n' >&2
 	exit 2
 fi
 
