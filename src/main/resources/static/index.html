@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Seat Reservation</title>
+	<style>
+		:root {
+			color-scheme: light;
+			font-family: system-ui, sans-serif;
+			color: #182230;
+			background: #f4f7fb;
+		}
+
+		body {
+			max-width: 760px;
+			margin: 0 auto;
+			padding: 48px 20px;
+		}
+
+		main {
+			padding: 32px;
+			border: 1px solid #d8e0ea;
+			border-radius: 12px;
+			background: white;
+			box-shadow: 0 8px 24px #1822300d;
+		}
+
+		h1, h2 {
+			margin-top: 0;
+		}
+
+		p {
+			line-height: 1.55;
+		}
+
+		label {
+			display: block;
+			margin: 24px 0 8px;
+			font-weight: 600;
+		}
+
+		input, button {
+			font: inherit;
+		}
+
+		input {
+			box-sizing: border-box;
+			width: 100%;
+			padding: 10px 12px;
+			border: 1px solid #aab7c7;
+			border-radius: 6px;
+		}
+
+		button {
+			margin-top: 16px;
+			padding: 10px 16px;
+			border: 0;
+			border-radius: 6px;
+			color: white;
+			background: #175cd3;
+			font-weight: 650;
+			cursor: pointer;
+		}
+
+		button:disabled {
+			cursor: wait;
+			opacity: 0.65;
+		}
+
+		.notice {
+			padding: 12px 14px;
+			border-left: 4px solid #f79009;
+			background: #fffaeb;
+		}
+
+		#output {
+			min-height: 80px;
+			margin-top: 24px;
+			padding: 16px;
+			overflow-wrap: anywhere;
+			border-radius: 6px;
+			background: #101828;
+			color: #e4e7ec;
+			white-space: pre-wrap;
+		}
+
+		#output:empty::before {
+			content: "Burst test results will appear here.";
+			color: #98a2b3;
+		}
+	</style>
+</head>
+<body>
+	<main>
+		<h1>Seat Reservation</h1>
+		<p>The reservation API is running. Run a burst test to check hot-seat contention,
+			idempotent retries, per-user limits, and final seat reconciliation.</p>
+
+		<p class="notice"><strong>Before you run it:</strong> this creates a test show and
+			confirmed reservations in the database. They are not automatically deleted.</p>
+
+		<form id="burst-form">
+			<label for="admin-token">Admin token</label>
+			<input id="admin-token" name="admin-token" type="password" required
+				autocomplete="off" spellcheck="false">
+			<button id="run-button" type="submit">Run burst test</button>
+		</form>
+
+		<section aria-labelledby="results-heading">
+			<h2 id="results-heading" style="margin-top: 28px;">Output</h2>
+			<pre id="output" role="status" aria-live="polite"></pre>
+		</section>
+	</main>
+
+	<script>
+		const form = document.querySelector("#burst-form");
+		const tokenInput = document.querySelector("#admin-token");
+		const runButton = document.querySelector("#run-button");
+		const output = document.querySelector("#output");
+		const HOT_REQUESTS = 500;
+		const IDEMPOTENCY_REQUESTS = 100;
+		const USER_LIMIT_REQUESTS = 10;
+		const MAX_PARALLEL_REQUESTS = 50;
+
+		function appendOutput(message) {
+			output.textContent += `${message}\n`;
+		}
+
+		async function request(path, options = {}) {
+			const response = await fetch(path, options);
+			const body = await response.json().catch(() => null);
+			return { status: response.status, body };
+		}
+
+		async function runConcurrent(tasks) {
+			const results = new Array(tasks.length);
+			let nextTask = 0;
+			const worker = async () => {
+				while (nextTask < tasks.length) {
+					const index = nextTask++;
+					try {
+						results[index] = await tasks[index]();
+					} catch (error) {
+						results[index] = { status: 0, error: error.message };
+					}
+				}
+			};
+			await Promise.all(Array.from(
+				{ length: Math.min(MAX_PARALLEL_REQUESTS, tasks.length) },
+				worker
+			));
+			return results;
+		}
+
+		function summarize(results, expectedConflict = null) {
+			return results.reduce((summary, result) => {
+				if (result.status === 0 || result.status >= 500) {
+					summary.serverErrors++;
+				} else if (result.status === 201) {
+					summary.confirmed++;
+				} else if (result.status === 409 && result.body?.error === expectedConflict) {
+					summary.conflicts++;
+				} else {
+					summary.unexpected.push(
+						`HTTP ${result.status}: ${JSON.stringify(result.body)}`
+					);
+				}
+				return summary;
+			}, { confirmed: 0, conflicts: 0, serverErrors: 0, unexpected: [] });
+		}
+
+		async function runBurst(adminToken) {
+			output.textContent = "";
+			appendOutput("Creating a test show...");
+			const showName = `burst-${Date.now()}-${crypto.randomUUID()}`;
+			const seats = ["A12", "B1", ...Array.from({ length: 10 }, (_, i) => `C${i + 1}`)];
+			const created = await request("/shows", {
+				method: "POST",
+				headers: {
+					"Authorization": `Bearer ${adminToken}`,
+					"Content-Type": "application/json"
+				},
+				body: JSON.stringify({
+					name: showName,
+					seats,
+					price_paise: 25000,
+					per_user_limit: 4
+				})
+			});
+			if (created.status !== 201 || !created.body?.id) {
+				throw new Error(`Could not create test show (HTTP ${created.status}): ${
+					JSON.stringify(created.body)
+				}`);
+			}
+
+			const showId = created.body.id;
+			appendOutput(`Show: ${showId}`);
+			appendOutput(`Running ${HOT_REQUESTS + IDEMPOTENCY_REQUESTS
+				+ USER_LIMIT_REQUESTS} reservation requests (up to ${MAX_PARALLEL_REQUESTS} at a time)...`);
+
+			const hotResults = await runConcurrent(Array.from(
+				{ length: HOT_REQUESTS },
+				(_, index) => () => request(`/shows/${showId}/reserve`, {
+					method: "POST",
+					headers: {
+						"Authorization": `Bearer user:burst-hot-${index + 1}`,
+						"Idempotency-Key": `hot-${showId}-${index + 1}`,
+						"Content-Type": "application/json"
+					},
+					body: JSON.stringify({ seats: ["A12"] })
+				})
+			));
+
+			const idempotencyResults = await runConcurrent(Array.from(
+				{ length: IDEMPOTENCY_REQUESTS },
+				() => () => request(`/shows/${showId}/reserve`, {
+					method: "POST",
+					headers: {
+						"Authorization": "Bearer user:burst-idempotent",
+						"Idempotency-Key": `same-key-${showId}`,
+						"Content-Type": "application/json"
+					},
+					body: JSON.stringify({ seats: ["B1"] })
+				})
+			));
+			const idempotencyReservationIds = idempotencyResults
+				.filter(result => result.status === 201)
+				.map(result => result.body?.reservation_id)
+				.filter(Boolean);
+			const idempotencyReplayCount = idempotencyReservationIds.length > 0
+				? idempotencyReservationIds.length - new Set(idempotencyReservationIds).size
+				: 0;
+
+			const userLimitResults = await runConcurrent(Array.from(
+				{ length: USER_LIMIT_REQUESTS },
+				(_, index) => () => request(`/shows/${showId}/reserve`, {
+					method: "POST",
+					headers: {
+						"Authorization": "Bearer user:burst-limited-user",
+						"Idempotency-Key": `limit-${showId}-${index + 1}`,
+						"Content-Type": "application/json"
+					},
+					body: JSON.stringify({ seats: [`C${index + 1}`] })
+				})
+			));
+
+			const hotSummary = summarize(hotResults, "seat_taken");
+			const idempotencySummary = summarize(idempotencyResults);
+			const userLimitSummary = summarize(userLimitResults, "per_user_limit");
+			const allErrors = [
+				...hotSummary.unexpected,
+				...idempotencySummary.unexpected,
+				...userLimitSummary.unexpected
+			];
+			const serverErrors = hotSummary.serverErrors
+				+ idempotencySummary.serverErrors
+				+ userLimitSummary.serverErrors;
+			const finalState = await request(`/shows/${showId}`);
+			if (finalState.status !== 200 || !finalState.body) {
+				throw new Error(`Could not fetch final show state (HTTP ${finalState.status}).`);
+			}
+
+			const state = finalState.body;
+			const expectedConfirmed = 6;
+			const passed = hotSummary.confirmed === 1
+				&& hotSummary.conflicts === HOT_REQUESTS - 1
+				&& idempotencySummary.confirmed === IDEMPOTENCY_REQUESTS
+				&& idempotencyReservationIds.length === IDEMPOTENCY_REQUESTS
+				&& new Set(idempotencyReservationIds).size === 1
+				&& idempotencyReplayCount === IDEMPOTENCY_REQUESTS - 1
+				&& userLimitSummary.confirmed === 4
+				&& userLimitSummary.conflicts === USER_LIMIT_REQUESTS - 4
+				&& serverErrors === 0
+				&& allErrors.length === 0
+				&& state.available_seats + state.held_seats + state.confirmed_seats === state.total_seats
+				&& state.confirmed_seats === expectedConfirmed;
+
+			appendOutput("");
+			appendOutput("Results");
+			appendOutput(`Hot seat: ${hotSummary.confirmed} confirmed, ${
+				hotSummary.conflicts
+			} seat_taken`);
+			appendOutput(`Idempotency: ${idempotencyReservationIds.length > 0 ? 1 : 0
+				} reservation, ${idempotencyReplayCount} replay responses`);
+			appendOutput(`User limit: ${userLimitSummary.confirmed} confirmed, ${
+				userLimitSummary.conflicts
+			} per_user_limit`);
+			appendOutput(`5xx / transport failures: ${serverErrors}`);
+			appendOutput(`Unexpected responses: ${allErrors.length}`);
+			if (allErrors.length > 0) {
+				allErrors.slice(0, 10).forEach(error => appendOutput(`  ${error}`));
+			}
+			appendOutput("");
+			appendOutput("Final state");
+			appendOutput(`Total seats: ${state.total_seats}`);
+			appendOutput(`Available: ${state.available_seats}`);
+			appendOutput(`Held: ${state.held_seats}`);
+			appendOutput(`Confirmed: ${state.confirmed_seats}`);
+			appendOutput(`Reconciliation: ${state.available_seats} + ${state.held_seats} + ${
+				state.confirmed_seats
+			} = ${state.total_seats}`);
+			appendOutput(passed ? "PASS" : "FAIL");
+		}
+
+		form.addEventListener("submit", async event => {
+			event.preventDefault();
+			runButton.disabled = true;
+			output.textContent = "";
+			try {
+				await runBurst(tokenInput.value.trim());
+			} catch (error) {
+				appendOutput(`Burst test failed: ${error.message}`);
+			} finally {
+				runButton.disabled = false;
+			}
+		});
+	</script>
+</body>
+</html>

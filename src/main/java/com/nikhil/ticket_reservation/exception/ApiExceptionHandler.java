@@ -11,6 +11,7 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -31,6 +32,12 @@ public class ApiExceptionHandler {
 	})
 	public ResponseEntity<ApiErrorResponse> handleInvalidRequest(Exception exception) {
 		return ResponseEntity.badRequest().body(new ApiErrorResponse("invalid_request"));
+	}
+
+	@ExceptionHandler(NoResourceFoundException.class)
+	public ResponseEntity<ApiErrorResponse> handleNoResourceFound(NoResourceFoundException exception) {
+		return ResponseEntity.status(HttpStatus.NOT_FOUND)
+				.body(new ApiErrorResponse("resource_not_found"));
 	}
 
 	@ExceptionHandler(Exception.class)
