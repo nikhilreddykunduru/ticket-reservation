@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: ticket-reservation
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health/ready
+    envVars:
+      - key: DATABASE_URL
+        value: "jdbc:postgresql://${{ticket-reservation-db.host}}:${{ticket-reservation-db.port}}/${{ticket-reservation-db.database}}"
+      - key: DATABASE_USERNAME
+        fromDatabase:
+          name: ticket-reservation-db
+          property: user
+      - key: DATABASE_PASSWORD
+        fromDatabase:
+          name: ticket-reservation-db
+          property: password
+      - key: ADMIN_TOKEN
+        generateValue: true
+
+databases:
+  - name: ticket-reservation-db
+    databaseName: seatreservation
+    user: ticket_reservation
