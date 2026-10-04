@@ -18,10 +18,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.nikhil.ticket_reservation.PostgresIntegrationTest;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional
-class ReservationCancellationTest {
+class CancellationIntegrationTest extends PostgresIntegrationTest {
 
 	@Autowired
 	private MockMvc mockMvc;

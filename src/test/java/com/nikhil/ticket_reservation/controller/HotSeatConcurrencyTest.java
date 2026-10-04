@@ -24,11 +24,13 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import com.nikhil.ticket_reservation.PostgresIntegrationTest;
+
 @SpringBootTest
 @AutoConfigureMockMvc
-class HotSeatConcurrencyTest {
+class HotSeatConcurrencyTest extends PostgresIntegrationTest {
 
-	private static final int USER_COUNT = 100;
+	private static final int USER_COUNT = 500;
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -62,7 +64,7 @@ class HotSeatConcurrencyTest {
 
 	@Test
 	void onlyOneConcurrentUserCanReserveTheHotSeat() throws Exception {
-		ExecutorService executor = Executors.newFixedThreadPool(USER_COUNT);
+		ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 		CountDownLatch ready = new CountDownLatch(USER_COUNT);
 		CountDownLatch start = new CountDownLatch(1);
 		List<Future<MvcResult>> responses = new ArrayList<>(USER_COUNT);
@@ -90,6 +92,7 @@ class HotSeatConcurrencyTest {
 
 			int created = 0;
 			int conflicts = 0;
+			int serverErrors = 0;
 			for (Future<MvcResult> response : responses) {
 				MvcResult result = response.get(60, TimeUnit.SECONDS);
 				int status = result.getResponse().getStatus();
@@ -99,13 +102,16 @@ class HotSeatConcurrencyTest {
 					conflicts++;
 					assertTrue(result.getResponse().getContentAsString().contains("\"error\":\"seat_taken\""),
 							"Hot-seat contention should return the seat_taken domain error");
+				} else if (status >= 500) {
+					serverErrors++;
 				} else {
 					throw new AssertionError("Unexpected response status: " + status);
 				}
 			}
 
 			assertEquals(1, created, "Exactly one user should reserve A12");
-			assertEquals(99, conflicts, "All other users should receive a conflict");
+			assertEquals(499, conflicts, "All other users should receive a conflict");
+			assertEquals(0, serverErrors, "Concurrent requests must not return server errors");
 			assertEquals(1, jdbcTemplate.queryForObject(
 					"SELECT COUNT(*) FROM reservations WHERE show_id = ?", Integer.class, showId));
 			assertEquals("CONFIRMED", jdbcTemplate.queryForObject(

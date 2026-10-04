@@ -24,9 +24,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import com.nikhil.ticket_reservation.PostgresIntegrationTest;
+
 @SpringBootTest
 @AutoConfigureMockMvc
-class IdempotencyTest {
+class IdempotencyConcurrencyTest extends PostgresIntegrationTest {
 
 	private static final int REQUEST_COUNT = 100;
 	private static final String USER_ID = "idempotency-user";
@@ -37,6 +40,9 @@ class IdempotencyTest {
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	private MeterRegistry meterRegistry;
 
 	private UUID showId;
 
@@ -64,7 +70,8 @@ class IdempotencyTest {
 
 	@Test
 	void replaysSameRequestRejectsChangedRequestAndHandlesOneHundredConcurrentRequests() throws Exception {
-		ExecutorService executor = Executors.newFixedThreadPool(REQUEST_COUNT);
+		double replayCountBefore = meterRegistry.counter("reservations_replayed_total").count();
+		ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 		CountDownLatch ready = new CountDownLatch(REQUEST_COUNT);
 		CountDownLatch start = new CountDownLatch(1);
 		List<Future<MvcResult>> responses = new ArrayList<>(REQUEST_COUNT);
@@ -84,6 +91,7 @@ class IdempotencyTest {
 			start.countDown();
 
 			String originalResponse = null;
+			int replays = 0;
 			for (Future<MvcResult> response : responses) {
 				MvcResult result = response.get(60, TimeUnit.SECONDS);
 				assertEquals(201, result.getResponse().getStatus());
@@ -92,8 +100,12 @@ class IdempotencyTest {
 					originalResponse = body;
 				} else {
 					assertEquals(originalResponse, body);
+					replays++;
 				}
 			}
+			assertEquals(REQUEST_COUNT - 1, replays);
+			assertEquals(REQUEST_COUNT - 1, meterRegistry.counter("reservations_replayed_total").count()
+					- replayCountBefore);
 
 			MvcResult retry = reserve("[\"A12\"]");
 			assertEquals(201, retry.getResponse().getStatus());

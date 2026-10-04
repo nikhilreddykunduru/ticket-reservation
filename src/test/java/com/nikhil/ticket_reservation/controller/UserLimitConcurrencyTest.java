@@ -24,9 +24,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import com.nikhil.ticket_reservation.PostgresIntegrationTest;
+
 @SpringBootTest
 @AutoConfigureMockMvc
-class UserLimitConcurrencyTest {
+class UserLimitConcurrencyTest extends PostgresIntegrationTest {
 
 	private static final int REQUEST_COUNT = 10;
 	private static final int PER_USER_LIMIT = 4;
@@ -66,7 +68,7 @@ class UserLimitConcurrencyTest {
 
 	@Test
 	void concurrentReservationsForOneUserDoNotExceedPerUserLimit() throws Exception {
-		ExecutorService executor = Executors.newFixedThreadPool(REQUEST_COUNT);
+		ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 		CountDownLatch ready = new CountDownLatch(REQUEST_COUNT);
 		CountDownLatch start = new CountDownLatch(1);
 		List<Future<MvcResult>> responses = new ArrayList<>(REQUEST_COUNT);
