@@ -49,7 +49,7 @@ public class ReservationService {
 		Show show = showRepository.findById(showId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Show not found"));
 
-		reservationRepository.createAndLockUserShowCounter(showId, userId);
+		int occupiedCount = reservationRepository.createAndLockUserShowCounter(showId, userId);
 
 		// Another request using the same key may have completed while this request waited for the counter lock.
 		existingHash = reservationRepository.findIdempotencyRequestHash(showId, userId, idempotencyKey);
@@ -57,15 +57,14 @@ public class ReservationService {
 			return replayOrReject(showId, userId, idempotencyKey, requestHash, existingHash.get());
 		}
 
+		if ((long) occupiedCount + requestedSeats.size() > show.perUserLimit()) {
+			throw new PerUserLimitExceededException();
+		}
+
 		List<Seat> seats = reservationRepository.lockSeatsByCode(showId, requestedSeats);
 		if (seats.size() != requestedSeats.size()
 				|| seats.stream().anyMatch(seat -> !seat.status().equals("AVAILABLE"))) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT, "One or more requested seats are unavailable");
-		}
-
-		int occupiedCount = reservationRepository.getOccupiedCount(showId, userId);
-		if ((long) occupiedCount + seats.size() > show.perUserLimit()) {
-			throw new ResponseStatusException(HttpStatus.CONFLICT, "Per-user reservation limit exceeded");
 		}
 
 		long amountPaise;

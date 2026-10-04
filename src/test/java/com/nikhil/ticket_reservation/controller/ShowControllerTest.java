@@ -3,6 +3,7 @@ package com.nikhil.ticket_reservation.controller;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -224,8 +225,9 @@ class ShowControllerTest {
 				.header("Authorization", "Bearer user:alice")
 				.header("Idempotency-Key", "second-seat")
 				.contentType(MediaType.APPLICATION_JSON)
-				.content("{\"seats\":[\"A2\"]}"))
-				.andExpect(status().isConflict());
+				.content("{\"seats\":[\"A2\",\"missing\"]}"))
+				.andExpect(status().isConflict())
+				.andExpect(content().json("{\"error\":\"per_user_limit\"}", true));
 
 		assertEquals(1, jdbcTemplate.queryForObject(
 				"SELECT occupied_count FROM user_show_counters WHERE show_id = ? AND user_id = 'alice'",

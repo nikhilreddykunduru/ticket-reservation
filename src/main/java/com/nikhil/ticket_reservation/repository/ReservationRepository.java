@@ -28,19 +28,13 @@ public class ReservationRepository {
 		return hashes.stream().findFirst();
 	}
 
-	public void createAndLockUserShowCounter(UUID showId, String userId) {
+	public int createAndLockUserShowCounter(UUID showId, String userId) {
 		jdbcTemplate.update(
 				"INSERT INTO user_show_counters (show_id, user_id, occupied_count) VALUES (?, ?, 0) "
 						+ "ON CONFLICT (show_id, user_id) DO NOTHING",
 				showId, userId);
-		jdbcTemplate.queryForObject(
-				"SELECT occupied_count FROM user_show_counters WHERE show_id = ? AND user_id = ? FOR UPDATE",
-				Integer.class, showId, userId);
-	}
-
-	public int getOccupiedCount(UUID showId, String userId) {
 		return jdbcTemplate.queryForObject(
-				"SELECT occupied_count FROM user_show_counters WHERE show_id = ? AND user_id = ?",
+				"SELECT occupied_count FROM user_show_counters WHERE show_id = ? AND user_id = ? FOR UPDATE",
 				Integer.class, showId, userId);
 	}
 
