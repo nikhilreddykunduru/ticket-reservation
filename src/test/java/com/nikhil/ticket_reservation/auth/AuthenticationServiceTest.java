@@ -4,7 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.web.server.ResponseStatusException;
+
+import com.nikhil.ticket_reservation.exception.ApiException;
 
 class AuthenticationServiceTest {
 
@@ -22,7 +23,8 @@ class AuthenticationServiceTest {
 
 	@Test
 	void rejectsUserTokenForAdminAccess() {
-		assertThrows(ResponseStatusException.class,
+		ApiException exception = assertThrows(ApiException.class,
 				() -> authenticationService.requireAdmin("Bearer user:alice"));
+		assertEquals("unauthorized_action", exception.error());
 	}
 }

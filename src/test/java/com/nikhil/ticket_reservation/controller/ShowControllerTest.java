@@ -74,7 +74,8 @@ class ShowControllerTest {
 						  "per_user_limit": 4
 						}
 						"""))
-				.andExpect(status().isUnauthorized());
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.error").value("authentication_required"));
 	}
 
 	@Test
@@ -109,7 +110,21 @@ class ShowControllerTest {
 	@Test
 	void returnsNotFoundForUnknownShow() throws Exception {
 		mockMvc.perform(get("/shows/{id}", UUID.randomUUID()))
-				.andExpect(status().isNotFound());
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error").value("resource_not_found"));
+	}
+
+	@Test
+	void malformedReservationRequestReturnsInvalidRequest() throws Exception {
+		UUID showId = insertShow("invalid-request", 25000L, 4, "A1");
+
+		mockMvc.perform(post("/shows/{id}/reserve", showId)
+				.header("Authorization", "Bearer user:alice")
+				.header("Idempotency-Key", "malformed")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error").value("invalid_request"));
 	}
 
 	@Test
@@ -203,7 +218,8 @@ class ShowControllerTest {
 				.header("Idempotency-Key", "two-seats")
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"seats\":[\"A1\",\"A2\"]}"))
-				.andExpect(status().isConflict());
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.error").value("seat_taken"));
 
 		assertEquals("AVAILABLE", jdbcTemplate.queryForObject(
 				"SELECT status FROM seats WHERE show_id = ? AND seat_code = 'A1'", String.class, showId));

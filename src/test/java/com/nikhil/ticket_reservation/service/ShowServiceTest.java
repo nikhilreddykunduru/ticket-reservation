@@ -8,9 +8,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.web.server.ResponseStatusException;
 
 import com.nikhil.ticket_reservation.dto.CreateShowRequest;
+import com.nikhil.ticket_reservation.exception.ApiException;
 import com.nikhil.ticket_reservation.repository.ShowRepository;
 
 class ShowServiceTest {
@@ -24,10 +24,11 @@ class ShowServiceTest {
 		CreateShowRequest request = new CreateShowRequest("friday-night",
 				java.util.List.of("A1", "A1"), 25000L, 4);
 
-		ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+		ApiException exception = assertThrows(ApiException.class,
 				() -> showService.createShow(request));
 
-		assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+		assertEquals(HttpStatus.BAD_REQUEST, exception.status());
+		assertEquals("invalid_request", exception.error());
 		verifyNoInteractions(showRepository, jdbcTemplate);
 	}
 }

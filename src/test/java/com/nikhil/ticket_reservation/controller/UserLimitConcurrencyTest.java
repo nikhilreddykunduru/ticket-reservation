@@ -69,7 +69,7 @@ class UserLimitConcurrencyTest {
 		ExecutorService executor = Executors.newFixedThreadPool(REQUEST_COUNT);
 		CountDownLatch ready = new CountDownLatch(REQUEST_COUNT);
 		CountDownLatch start = new CountDownLatch(1);
-		List<Future<Integer>> responses = new ArrayList<>(REQUEST_COUNT);
+		List<Future<MvcResult>> responses = new ArrayList<>(REQUEST_COUNT);
 
 		try {
 			for (int seat = 0; seat < REQUEST_COUNT; seat++) {
@@ -85,7 +85,7 @@ class UserLimitConcurrencyTest {
 							.contentType(MediaType.APPLICATION_JSON)
 							.content("{\"seats\":[\"A" + seatNumber + "\"]}"))
 							.andReturn();
-					return result.getResponse().getStatus();
+					return result;
 				}));
 			}
 
@@ -94,12 +94,15 @@ class UserLimitConcurrencyTest {
 
 			int created = 0;
 			int conflicts = 0;
-			for (Future<Integer> response : responses) {
-				int status = response.get(60, TimeUnit.SECONDS);
+			for (Future<MvcResult> response : responses) {
+				MvcResult result = response.get(60, TimeUnit.SECONDS);
+				int status = result.getResponse().getStatus();
 				if (status == 201) {
 					created++;
 				} else if (status == 409) {
 					conflicts++;
+					assertTrue(result.getResponse().getContentAsString().contains("\"error\":\"per_user_limit\""),
+							"Over-limit requests should return the per_user_limit domain error");
 				} else {
 					throw new AssertionError("Unexpected response status: " + status);
 				}

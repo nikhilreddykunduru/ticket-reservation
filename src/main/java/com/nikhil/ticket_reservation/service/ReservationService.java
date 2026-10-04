@@ -10,10 +10,10 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import com.nikhil.ticket_reservation.dto.ReservationResponse;
 import com.nikhil.ticket_reservation.dto.ReserveRequest;
+import com.nikhil.ticket_reservation.exception.ApiException;
 import com.nikhil.ticket_reservation.model.Seat;
 import com.nikhil.ticket_reservation.model.Show;
 import com.nikhil.ticket_reservation.repository.IdempotencyRepository;
@@ -39,10 +39,10 @@ public class ReservationService {
 	@Transactional
 	public ReservationResponse reserve(UUID showId, String userId, String idempotencyKey, ReserveRequest request) {
 		if (idempotencyKey == null || idempotencyKey.isBlank()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idempotency-Key header is required");
+			throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request", "Idempotency-Key header is required");
 		}
 		if (request.seats().stream().distinct().count() != request.seats().size()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Seat names must be unique");
+			throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request", "Seat names must be unique");
 		}
 
 		List<String> requestedSeats = request.seats().stream().sorted().toList();
@@ -53,7 +53,7 @@ public class ReservationService {
 		}
 
 		Show show = showRepository.findById(showId)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Show not found"));
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "resource_not_found", "Show not found"));
 
 		int occupiedCount = reservationRepository.createAndLockUserShowCounter(showId, userId);
 
@@ -64,20 +64,20 @@ public class ReservationService {
 		}
 
 		if ((long) occupiedCount + requestedSeats.size() > show.perUserLimit()) {
-			throw new PerUserLimitExceededException();
+			throw new ApiException(HttpStatus.CONFLICT, "per_user_limit", "Per-user reservation limit exceeded");
 		}
 
 		List<Seat> seats = reservationRepository.lockSeatsByCode(showId, requestedSeats);
 		if (seats.size() != requestedSeats.size()
 				|| seats.stream().anyMatch(seat -> !seat.status().equals("AVAILABLE"))) {
-			throw new ResponseStatusException(HttpStatus.CONFLICT, "One or more requested seats are unavailable");
+			throw new ApiException(HttpStatus.CONFLICT, "seat_taken", "One or more requested seats are unavailable");
 		}
 
 		long amountPaise;
 		try {
 			amountPaise = Math.multiplyExact(show.pricePaise(), seats.size());
 		} catch (ArithmeticException exception) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Reservation amount is too large");
+			throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request", "Reservation amount is too large");
 		}
 
 		UUID reservationId = UUID.randomUUID();
@@ -94,13 +94,19 @@ public class ReservationService {
 	@Transactional
 	public UUID cancel(UUID reservationId, String userId) {
 		ReservationRepository.Reservation reservation = reservationRepository.lockReservation(reservationId)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reservation not found"));
+				.orElseThrow(() -> new ApiException(
+						HttpStatus.NOT_FOUND, "resource_not_found", "Reservation not found"));
 
 		if (!reservation.userId().equals(userId)) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the reservation owner can cancel it");
+			throw new ApiException(HttpStatus.FORBIDDEN, "unauthorized_action",
+					"Only the reservation owner can cancel it");
+		}
+		if (reservation.status().equals("CANCELLED")) {
+			throw new ApiException(HttpStatus.CONFLICT, "already_cancelled", "Reservation is already cancelled");
 		}
 		if (!reservation.status().equals("CONFIRMED")) {
-			throw new ReservationNotCancellableException();
+			throw new ApiException(HttpStatus.CONFLICT, "reservation_not_cancellable",
+					"Reservation is not confirmed");
 		}
 
 		// Reservation requests lock the user's counter before seats; keep that order to avoid deadlocks.
@@ -108,14 +114,16 @@ public class ReservationService {
 		List<Seat> seats = reservationRepository.lockSeatsByReservation(reservationId);
 		if (seats.isEmpty() || seats.stream().anyMatch(seat ->
 				!seat.status().equals("CONFIRMED") || !reservationId.equals(seat.reservationId()))) {
-			throw new ReservationNotCancellableException();
+			throw new ApiException(HttpStatus.CONFLICT, "reservation_not_cancellable",
+					"Reservation seats are not in a cancellable state");
 		}
 
 		if (reservationRepository.cancelReservation(reservationId) != 1
 				|| reservationRepository.releaseReservationSeats(reservationId, seats) != seats.size()
 				|| reservationRepository.decrementOccupiedCount(
 						reservation.showId(), userId, seats.size()) != 1) {
-			throw new ReservationNotCancellableException();
+			throw new ApiException(HttpStatus.CONFLICT, "reservation_not_cancellable",
+					"Reservation could not be cancelled safely");
 		}
 
 		return reservationId;
@@ -124,7 +132,8 @@ public class ReservationService {
 	private ReservationResponse replayOrReject(
 			UUID showId, String userId, String key, String requestHash, String existingHash) {
 		if (!existingHash.equals(requestHash)) {
-			throw new IdempotencyConflictException();
+			throw new ApiException(HttpStatus.CONFLICT, "idempotency_conflict",
+					"Idempotency key was already used for a different request");
 		}
 		return idempotencyRepository.findReservation(showId, userId, key)
 				.orElseThrow(() -> new IllegalStateException("Idempotency record has no reservation"));

@@ -65,7 +65,7 @@ class HotSeatConcurrencyTest {
 		ExecutorService executor = Executors.newFixedThreadPool(USER_COUNT);
 		CountDownLatch ready = new CountDownLatch(USER_COUNT);
 		CountDownLatch start = new CountDownLatch(1);
-		List<Future<Integer>> responses = new ArrayList<>(USER_COUNT);
+		List<Future<MvcResult>> responses = new ArrayList<>(USER_COUNT);
 
 		try {
 			for (int user = 0; user < USER_COUNT; user++) {
@@ -81,7 +81,7 @@ class HotSeatConcurrencyTest {
 							.contentType(MediaType.APPLICATION_JSON)
 							.content("{\"seats\":[\"A12\"]}"))
 							.andReturn();
-					return result.getResponse().getStatus();
+					return result;
 				}));
 			}
 
@@ -90,15 +90,15 @@ class HotSeatConcurrencyTest {
 
 			int created = 0;
 			int conflicts = 0;
-			int serverErrors = 0;
-			for (Future<Integer> response : responses) {
-				int status = response.get(60, TimeUnit.SECONDS);
+			for (Future<MvcResult> response : responses) {
+				MvcResult result = response.get(60, TimeUnit.SECONDS);
+				int status = result.getResponse().getStatus();
 				if (status == 201) {
 					created++;
 				} else if (status == 409) {
 					conflicts++;
-				} else if (status == 500) {
-					serverErrors++;
+					assertTrue(result.getResponse().getContentAsString().contains("\"error\":\"seat_taken\""),
+							"Hot-seat contention should return the seat_taken domain error");
 				} else {
 					throw new AssertionError("Unexpected response status: " + status);
 				}
@@ -106,7 +106,6 @@ class HotSeatConcurrencyTest {
 
 			assertEquals(1, created, "Exactly one user should reserve A12");
 			assertEquals(99, conflicts, "All other users should receive a conflict");
-			assertEquals(0, serverErrors, "No request should fail with a server error");
 			assertEquals(1, jdbcTemplate.queryForObject(
 					"SELECT COUNT(*) FROM reservations WHERE show_id = ?", Integer.class, showId));
 			assertEquals("CONFIRMED", jdbcTemplate.queryForObject(

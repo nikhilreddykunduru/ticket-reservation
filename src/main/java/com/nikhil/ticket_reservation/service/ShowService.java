@@ -9,12 +9,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import com.nikhil.ticket_reservation.dto.CreateShowRequest;
 import com.nikhil.ticket_reservation.dto.CreateShowResponse;
 import com.nikhil.ticket_reservation.dto.ShowDetailsResponse;
 import com.nikhil.ticket_reservation.dto.ShowDetailsResponse.SeatDetails;
+import com.nikhil.ticket_reservation.exception.ApiException;
 import com.nikhil.ticket_reservation.model.Seat;
 import com.nikhil.ticket_reservation.model.Show;
 import com.nikhil.ticket_reservation.repository.ShowRepository;
@@ -33,7 +33,7 @@ public class ShowService {
 	@Transactional
 	public CreateShowResponse createShow(CreateShowRequest request) {
 		if (new HashSet<>(request.seats()).size() != request.seats().size()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Seat names must be unique");
+			throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_request", "Seat names must be unique");
 		}
 
 		UUID showId = UUID.randomUUID();
@@ -57,17 +57,20 @@ public class ShowService {
 	@Transactional(readOnly = true)
 	public ShowDetailsResponse getShow(UUID id) {
 		Show show = showRepository.findById(id)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Show not found"));
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "resource_not_found", "Show not found"));
 		List<Seat> showSeats = showRepository.findSeatsByShowId(id);
 		List<SeatDetails> seats = showSeats.stream()
 				.map(seat -> new SeatDetails(seat.seatCode(), seat.status().toLowerCase(Locale.ROOT)))
 				.toList();
-		int availableSeats = (int) showSeats.stream()
-				.filter(seat -> seat.status().equals("AVAILABLE"))
-				.count();
-		int confirmedSeats = (int) showSeats.stream()
-				.filter(seat -> seat.status().equals("CONFIRMED"))
-				.count();
+		int availableSeats = 0;
+		int confirmedSeats = 0;
+		for (Seat seat : showSeats) {
+			switch (seat.status()) {
+				case "AVAILABLE" -> availableSeats++;
+				case "CONFIRMED" -> confirmedSeats++;
+				default -> throw new IllegalStateException("Unsupported seat status: " + seat.status());
+			}
+		}
 
 		return new ShowDetailsResponse(show.id(), show.name(), show.pricePaise(), showSeats.size(),
 				availableSeats, 0, confirmedSeats, seats);
