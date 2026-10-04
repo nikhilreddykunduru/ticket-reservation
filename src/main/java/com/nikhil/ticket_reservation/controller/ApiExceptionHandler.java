@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.nikhil.ticket_reservation.service.IdempotencyConflictException;
 import com.nikhil.ticket_reservation.service.PerUserLimitExceededException;
+import com.nikhil.ticket_reservation.service.ReservationNotCancellableException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -21,5 +22,10 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(IdempotencyConflictException.class)
 	public ResponseEntity<Map<String, String>> handleIdempotencyConflict() {
 		return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "idempotency_conflict"));
+	}
+
+	@ExceptionHandler(ReservationNotCancellableException.class)
+	public ResponseEntity<Map<String, String>> handleReservationNotCancellable() {
+		return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "reservation_not_cancellable"));
 	}
 }

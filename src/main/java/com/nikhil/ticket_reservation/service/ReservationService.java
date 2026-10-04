@@ -91,6 +91,36 @@ public class ReservationService {
 		return new ReservationResponse(reservationId, showId, userId, requestedSeats, amountPaise, "confirmed");
 	}
 
+	@Transactional
+	public UUID cancel(UUID reservationId, String userId) {
+		ReservationRepository.Reservation reservation = reservationRepository.lockReservation(reservationId)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reservation not found"));
+
+		if (!reservation.userId().equals(userId)) {
+			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the reservation owner can cancel it");
+		}
+		if (!reservation.status().equals("CONFIRMED")) {
+			throw new ReservationNotCancellableException();
+		}
+
+		// Reservation requests lock the user's counter before seats; keep that order to avoid deadlocks.
+		reservationRepository.lockUserShowCounter(reservation.showId(), userId);
+		List<Seat> seats = reservationRepository.lockSeatsByReservation(reservationId);
+		if (seats.isEmpty() || seats.stream().anyMatch(seat ->
+				!seat.status().equals("CONFIRMED") || !reservationId.equals(seat.reservationId()))) {
+			throw new ReservationNotCancellableException();
+		}
+
+		if (reservationRepository.cancelReservation(reservationId) != 1
+				|| reservationRepository.releaseReservationSeats(reservationId, seats) != seats.size()
+				|| reservationRepository.decrementOccupiedCount(
+						reservation.showId(), userId, seats.size()) != 1) {
+			throw new ReservationNotCancellableException();
+		}
+
+		return reservationId;
+	}
+
 	private ReservationResponse replayOrReject(
 			UUID showId, String userId, String key, String requestHash, String existingHash) {
 		if (!existingHash.equals(requestHash)) {
