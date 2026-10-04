@@ -7,9 +7,12 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.nikhil.ticket_reservation.dto.ReservationResponse;
 import com.nikhil.ticket_reservation.dto.ReserveRequest;
@@ -26,14 +29,17 @@ public class ReservationService {
 	private final ReservationRepository reservationRepository;
 	private final IdempotencyRepository idempotencyRepository;
 	private final ShowRepository showRepository;
+	private final MeterRegistry meterRegistry;
 
 	public ReservationService(
 			ReservationRepository reservationRepository,
 			IdempotencyRepository idempotencyRepository,
-			ShowRepository showRepository) {
+			ShowRepository showRepository,
+			MeterRegistry meterRegistry) {
 		this.reservationRepository = reservationRepository;
 		this.idempotencyRepository = idempotencyRepository;
 		this.showRepository = showRepository;
+		this.meterRegistry = meterRegistry;
 	}
 
 	@Transactional
@@ -64,12 +70,14 @@ public class ReservationService {
 		}
 
 		if ((long) occupiedCount + requestedSeats.size() > show.perUserLimit()) {
+			incrementDeclined("per_user_limit");
 			throw new ApiException(HttpStatus.CONFLICT, "per_user_limit", "Per-user reservation limit exceeded");
 		}
 
 		List<Seat> seats = reservationRepository.lockSeatsByCode(showId, requestedSeats);
 		if (seats.size() != requestedSeats.size()
 				|| seats.stream().anyMatch(seat -> !seat.status().equals("AVAILABLE"))) {
+			incrementDeclined("seat_taken");
 			throw new ApiException(HttpStatus.CONFLICT, "seat_taken", "One or more requested seats are unavailable");
 		}
 
@@ -87,6 +95,7 @@ public class ReservationService {
 		reservationRepository.incrementOccupiedCount(showId, userId, seats.size());
 		idempotencyRepository.createRecord(
 				UUID.randomUUID(), showId, userId, idempotencyKey, requestHash, reservationId);
+		incrementAfterCommit("reservations_confirmed_total");
 
 		return new ReservationResponse(reservationId, showId, userId, requestedSeats, amountPaise, "confirmed");
 	}
@@ -132,11 +141,31 @@ public class ReservationService {
 	private ReservationResponse replayOrReject(
 			UUID showId, String userId, String key, String requestHash, String existingHash) {
 		if (!existingHash.equals(requestHash)) {
+			incrementDeclined("idempotency_conflict");
 			throw new ApiException(HttpStatus.CONFLICT, "idempotency_conflict",
 					"Idempotency key was already used for a different request");
 		}
-		return idempotencyRepository.findReservation(showId, userId, key)
+		ReservationResponse response = idempotencyRepository.findReservation(showId, userId, key)
 				.orElseThrow(() -> new IllegalStateException("Idempotency record has no reservation"));
+		incrementAfterCommit("reservations_replayed_total");
+		return response;
+	}
+
+	private void incrementDeclined(String reason) {
+		meterRegistry.counter("reservations_declined_total", "reason", reason).increment();
+	}
+
+	private void incrementAfterCommit(String metricName) {
+		if (TransactionSynchronizationManager.isSynchronizationActive()) {
+			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+				@Override
+				public void afterCommit() {
+					meterRegistry.counter(metricName).increment();
+				}
+			});
+		} else {
+			meterRegistry.counter(metricName).increment();
+		}
 	}
 
 	private String hashRequest(List<String> seats) {
