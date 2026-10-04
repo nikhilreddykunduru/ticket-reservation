@@ -9,7 +9,7 @@ CREATE TABLE shows (
 CREATE TABLE reservations (
     id UUID PRIMARY KEY,
     show_id UUID NOT NULL REFERENCES shows (id),
-    user_id UUID NOT NULL,
+    user_id TEXT NOT NULL,
     amount_paise BIGINT NOT NULL CHECK (amount_paise >= 0),
     status TEXT NOT NULL CHECK (status IN ('CONFIRMED', 'CANCELLED')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -36,7 +36,7 @@ CREATE TABLE reservation_seats (
 CREATE TABLE idempotency_keys (
     id UUID PRIMARY KEY,
     show_id UUID NOT NULL REFERENCES shows (id),
-    user_id UUID NOT NULL,
+    user_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     request_hash TEXT NOT NULL,
     reservation_id UUID REFERENCES reservations (id),
@@ -46,7 +46,7 @@ CREATE TABLE idempotency_keys (
 
 CREATE TABLE user_show_counters (
     show_id UUID NOT NULL REFERENCES shows (id),
-    user_id UUID NOT NULL,
+    user_id TEXT NOT NULL,
     occupied_count INTEGER NOT NULL DEFAULT 0 CHECK (occupied_count >= 0),
     PRIMARY KEY (show_id, user_id)
 );

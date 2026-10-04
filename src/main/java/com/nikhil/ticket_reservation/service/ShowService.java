@@ -2,6 +2,7 @@ package com.nikhil.ticket_reservation.service;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
@@ -12,6 +13,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.nikhil.ticket_reservation.dto.CreateShowRequest;
 import com.nikhil.ticket_reservation.dto.CreateShowResponse;
+import com.nikhil.ticket_reservation.dto.ShowDetailsResponse;
+import com.nikhil.ticket_reservation.dto.ShowDetailsResponse.SeatDetails;
+import com.nikhil.ticket_reservation.model.Seat;
 import com.nikhil.ticket_reservation.model.Show;
 import com.nikhil.ticket_reservation.repository.ShowRepository;
 
@@ -48,5 +52,24 @@ public class ShowService {
 
 		return new CreateShowResponse(showId, show.name(), List.copyOf(request.seats()),
 				show.pricePaise(), show.perUserLimit());
+	}
+
+	@Transactional(readOnly = true)
+	public ShowDetailsResponse getShow(UUID id) {
+		Show show = showRepository.findById(id)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Show not found"));
+		List<Seat> showSeats = showRepository.findSeatsByShowId(id);
+		List<SeatDetails> seats = showSeats.stream()
+				.map(seat -> new SeatDetails(seat.seatCode(), seat.status().toLowerCase(Locale.ROOT)))
+				.toList();
+		int availableSeats = (int) showSeats.stream()
+				.filter(seat -> seat.status().equals("AVAILABLE"))
+				.count();
+		int confirmedSeats = (int) showSeats.stream()
+				.filter(seat -> seat.status().equals("CONFIRMED"))
+				.count();
+
+		return new ShowDetailsResponse(show.id(), show.name(), show.pricePaise(), showSeats.size(),
+				availableSeats, 0, confirmedSeats, seats);
 	}
 }
