@@ -16,6 +16,7 @@ import com.nikhil.ticket_reservation.dto.ReservationResponse;
 import com.nikhil.ticket_reservation.dto.ReserveRequest;
 import com.nikhil.ticket_reservation.model.Seat;
 import com.nikhil.ticket_reservation.model.Show;
+import com.nikhil.ticket_reservation.repository.IdempotencyRepository;
 import com.nikhil.ticket_reservation.repository.ReservationRepository;
 import com.nikhil.ticket_reservation.repository.ShowRepository;
 
@@ -23,10 +24,15 @@ import com.nikhil.ticket_reservation.repository.ShowRepository;
 public class ReservationService {
 
 	private final ReservationRepository reservationRepository;
+	private final IdempotencyRepository idempotencyRepository;
 	private final ShowRepository showRepository;
 
-	public ReservationService(ReservationRepository reservationRepository, ShowRepository showRepository) {
+	public ReservationService(
+			ReservationRepository reservationRepository,
+			IdempotencyRepository idempotencyRepository,
+			ShowRepository showRepository) {
 		this.reservationRepository = reservationRepository;
+		this.idempotencyRepository = idempotencyRepository;
 		this.showRepository = showRepository;
 	}
 
@@ -41,7 +47,7 @@ public class ReservationService {
 
 		List<String> requestedSeats = request.seats().stream().sorted().toList();
 		String requestHash = hashRequest(requestedSeats);
-		var existingHash = reservationRepository.findIdempotencyRequestHash(showId, userId, idempotencyKey);
+		var existingHash = idempotencyRepository.findRequestHash(showId, userId, idempotencyKey);
 		if (existingHash.isPresent()) {
 			return replayOrReject(showId, userId, idempotencyKey, requestHash, existingHash.get());
 		}
@@ -52,7 +58,7 @@ public class ReservationService {
 		int occupiedCount = reservationRepository.createAndLockUserShowCounter(showId, userId);
 
 		// Another request using the same key may have completed while this request waited for the counter lock.
-		existingHash = reservationRepository.findIdempotencyRequestHash(showId, userId, idempotencyKey);
+		existingHash = idempotencyRepository.findRequestHash(showId, userId, idempotencyKey);
 		if (existingHash.isPresent()) {
 			return replayOrReject(showId, userId, idempotencyKey, requestHash, existingHash.get());
 		}
@@ -79,7 +85,7 @@ public class ReservationService {
 		reservationRepository.createReservationSeats(reservationId, seats);
 		reservationRepository.confirmSeats(reservationId, seats);
 		reservationRepository.incrementOccupiedCount(showId, userId, seats.size());
-		reservationRepository.createIdempotencyRecord(
+		idempotencyRepository.createRecord(
 				UUID.randomUUID(), showId, userId, idempotencyKey, requestHash, reservationId);
 
 		return new ReservationResponse(reservationId, showId, userId, requestedSeats, amountPaise, "confirmed");
@@ -88,10 +94,9 @@ public class ReservationService {
 	private ReservationResponse replayOrReject(
 			UUID showId, String userId, String key, String requestHash, String existingHash) {
 		if (!existingHash.equals(requestHash)) {
-			throw new ResponseStatusException(
-					HttpStatus.CONFLICT, "Idempotency key was already used with a different seat selection");
+			throw new IdempotencyConflictException();
 		}
-		return reservationRepository.findReservation(showId, userId, key)
+		return idempotencyRepository.findReservation(showId, userId, key)
 				.orElseThrow(() -> new IllegalStateException("Idempotency record has no reservation"));
 	}
 

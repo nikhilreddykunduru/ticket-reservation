@@ -121,4 +121,55 @@ class UserLimitConcurrencyTest {
 			assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS), "Request workers should stop");
 		}
 	}
+
+	@Test
+	void concurrentRequestsWithSameIdempotencyKeyReturnOneReservation() throws Exception {
+		ExecutorService executor = Executors.newFixedThreadPool(REQUEST_COUNT);
+		CountDownLatch ready = new CountDownLatch(REQUEST_COUNT);
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<MvcResult>> responses = new ArrayList<>(REQUEST_COUNT);
+
+		try {
+			for (int request = 0; request < REQUEST_COUNT; request++) {
+				responses.add(executor.submit(() -> {
+					ready.countDown();
+					if (!start.await(30, TimeUnit.SECONDS)) {
+						throw new IllegalStateException("Timed out waiting for concurrent request start");
+					}
+					return mockMvc.perform(post("/shows/{id}/reserve", showId)
+							.header("Authorization", "Bearer user:" + USER_ID)
+							.header("Idempotency-Key", "same-concurrent-key")
+							.contentType(MediaType.APPLICATION_JSON)
+							.content("{\"seats\":[\"A0\"]}"))
+							.andReturn();
+				}));
+			}
+
+			assertTrue(ready.await(30, TimeUnit.SECONDS), "All requests should reach the start barrier");
+			start.countDown();
+
+			String originalResponse = null;
+			for (Future<MvcResult> response : responses) {
+				MvcResult result = response.get(60, TimeUnit.SECONDS);
+				assertEquals(201, result.getResponse().getStatus());
+				String body = result.getResponse().getContentAsString();
+				if (originalResponse == null) {
+					originalResponse = body;
+				} else {
+					assertEquals(originalResponse, body);
+				}
+			}
+
+			assertEquals(1, jdbcTemplate.queryForObject(
+					"SELECT COUNT(*) FROM reservations WHERE show_id = ?", Integer.class, showId));
+			assertEquals(1, jdbcTemplate.queryForObject(
+					"SELECT COUNT(*) FROM idempotency_keys WHERE show_id = ? AND user_id = ? "
+							+ "AND idempotency_key = ?",
+					Integer.class, showId, USER_ID, "same-concurrent-key"));
+		} finally {
+			start.countDown();
+			executor.shutdownNow();
+			assertTrue(executor.awaitTermination(30, TimeUnit.SECONDS), "Request workers should stop");
+		}
+	}
 }

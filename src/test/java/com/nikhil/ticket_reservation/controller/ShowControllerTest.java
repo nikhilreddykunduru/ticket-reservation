@@ -166,7 +166,7 @@ class ShowControllerTest {
 				.header("Authorization", "Bearer user:alice")
 				.header("Idempotency-Key", "same-key")
 				.contentType(MediaType.APPLICATION_JSON)
-				.content("{\"seats\":[\"A1\"]}"))
+				.content("{\"seats\":[\"A1\",\"A2\"]}"))
 				.andExpect(status().isCreated())
 				.andReturn().getResponse().getContentAsString();
 
@@ -174,7 +174,7 @@ class ShowControllerTest {
 				.header("Authorization", "Bearer user:alice")
 				.header("Idempotency-Key", "same-key")
 				.contentType(MediaType.APPLICATION_JSON)
-				.content("{\"seats\":[\"A1\"]}"))
+				.content("{\"seats\":[\"A2\",\"A1\"]}"))
 				.andExpect(status().isCreated())
 				.andReturn().getResponse().getContentAsString();
 		assertEquals(firstResponse, replayResponse);
@@ -183,8 +183,9 @@ class ShowControllerTest {
 				.header("Authorization", "Bearer user:alice")
 				.header("Idempotency-Key", "same-key")
 				.contentType(MediaType.APPLICATION_JSON)
-				.content("{\"seats\":[\"A2\"]}"))
-				.andExpect(status().isConflict());
+				.content("{\"seats\":[\"A1\"]}"))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.error").value("idempotency_conflict"));
 
 		assertEquals(1, jdbcTemplate.queryForObject(
 				"SELECT COUNT(*) FROM reservations WHERE show_id = ?", Integer.class, showId));
