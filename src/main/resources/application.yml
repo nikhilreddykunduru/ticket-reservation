@@ -3,3 +3,6 @@ spring:
     url: jdbc:postgresql://127.0.0.1:5433/seatreservation
     username: postgres
     password: postgres
+
+ticket-reservation:
+  admin-token: ${ADMIN_TOKEN:admin-secret}
